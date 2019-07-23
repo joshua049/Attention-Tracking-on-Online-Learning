@@ -34,21 +34,7 @@ while True:
         # detect face
         face_rects, scores, idx = detector.run(frame1, 0)
 
-        # retrieve result
         for i, d in enumerate(face_rects):
-            x1 = d.left()
-            y1 = d.top()
-            x2 = d.right()
-            y2 = d.bottom()
-            text = " %2.2f ( %d )" % (scores[i], idx[i])
-
-            # bounding box
-            cv2.rectangle(frame1, (x1, y1), (x2, y2), ( 0, 255, 0), 4, cv2. LINE_AA)
-
-            # confidence score
-            cv2.putText(frame1, text, (x1, y1), cv2. FONT_HERSHEY_DUPLEX,
-            0.7, ( 255, 255, 255), 1, cv2. LINE_AA)
-        
             # color of certain frame
             landmarks_frame = cv2.cvtColor(frame1, cv2. COLOR_BGR2RGB)
 
@@ -56,9 +42,17 @@ while True:
             shape = predictor(landmarks_frame, d)
         
             # draw 68 feature point
-            for i in range(68):
+            for i in range(36, 48):
                 cv2.circle(frame1,(shape.part(i).x,shape.part(i).y), 3,( 0, 0, 255), 2)
                 cv2.putText(frame1, str(i),(shape.part(i).x,shape.part(i).y),cv2. FONT_HERSHEY_COMPLEX, 0.5,( 255, 0, 0), 1)
-                
-            
+
+            #bounding box's corner position
+            x1 = max(shape.part(i).x for i in range(36, 48))
+            y1 = max(shape.part(i).y for i in range(36, 48))
+            x2 = min(shape.part(i).x for i in range(36, 48))
+            y2 = min(shape.part(i).y for i in range(36, 48))
+
+            # bounding box
+            cv2.rectangle(frame1, (x1+2, y1+2), (x2-2, y2-2), ( 0, 255, 0), 2, cv2. LINE_AA)
+        
         socket.send_pyobj(frame1)
