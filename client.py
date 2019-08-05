@@ -41,14 +41,14 @@ while(True):
     # wait for return
     frame_result = socket.recv_pyobj()
     #frame_result = np.frombuffer(socket.recv(), dtype=np.uint8).reshape(256, 374, 3)
-    #cv2.namedWindow('from server', cv2.WINDOW_NORMAL)
-    #cv2.resizeWindow("from server", 480, 270)
-    #cv2.moveWindow("from server", size["width"],0)
+    cv2.namedWindow('from server', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("from server", 640, 380)
+    cv2.moveWindow("from server", 0,0)
 
     print(frame_result)
     a, b = frame_result
     y, x = round(-50*a), round(-50*b)
-    cv2.arrowedLine(frame1, (187, 128), (x+187, y+128), ( 0, 255, 0))
+    cv2.arrowedLine(frame1, (187, 128), (x+187, y+128), (255, 0, 0), 2, cv2.LINE_AA, 0, 0.1)
     cv2.imshow('from server', frame1)
 
     # press q to quit
