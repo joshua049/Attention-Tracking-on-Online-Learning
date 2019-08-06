@@ -21,9 +21,9 @@ socket = context.socket(zmq.REP)
 socket.bind(ADDRESS)
 
 # default face detector
-detector = dlib.get_frontal_face_detector()
+#detector = dlib.get_frontal_face_detector()
 # load in model
-predictor = dlib.shape_predictor( 'shape_predictor_68_face_landmarks.dat')
+#predictor = dlib.shape_predictor( 'shape_predictor_68_face_landmarks.dat')
 
 while True:
     # conn, addr = s.accept()
@@ -36,14 +36,14 @@ while True:
         print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
         
         # detect face
-        face_rects, scores, idx = detector.run(frame1, 0)
+        #face_rects, scores, idx = detector.run(frame1, 0)
 
-        print(scores)
-        if len(face_rects) == 0:
-            socket.send_pyobj([0, 0])
-            continue
+        # print(scores)
+        # if len(face_rects) == 0:
+        #     socket.send_pyobj([0, 0])
+        #     continue
         
-        face = face_rects[np.array(scores).argmax()]
+        # face = face_rects[np.array(scores).argmax()]
 
         #for i, d in enumerate(face_rects):
         #print(d)
@@ -64,24 +64,24 @@ while True:
         # x2 = min(shape.part(i).x for i in range(36, 48))
         # y2 = min(shape.part(i).y for i in range(36, 48))
         #i, d = face_rects[face]
-        H, W, _ = frame1.shape
-        x1 = max(face.left(), 0)
-        y1 = max(face.top(), 0)
-        x2 = min(face.right(), W)
-        y2 = min(face.bottom(), H)
+        # H, W, _ = frame1.shape
+        # x1 = max(face.left(), 0)
+        # y1 = max(face.top(), 0)
+        # x2 = min(face.right(), W)
+        # y2 = min(face.bottom(), H)
 
         # bounding box
         #cv2.rectangle(frame1, (x1+5, y1+5), (x2-5, y2-5), ( 0, 255, 0), 2, cv2. LINE_AA)
-        img = frame1[y1:y2, x1:x2]
-        cv2.rectangle(frame1, (x1, y1), (x2, y2), ( 0, 255, 0), 4, cv2. LINE_AA)
+        # img = frame1[y1:y2, x1:x2]
+        # cv2.rectangle(frame1, (x1, y1), (x2, y2), ( 0, 255, 0), 4, cv2. LINE_AA)
 
-        print(x1, x2, y1, y2)
+        # print(x1, x2, y1, y2)
         # cv2.imwrite('frame.jpg', frame1)
         # cv2.imwrite('crop.jpg', img)
         #cv2.resize(img, (256, 256))
         #print(frame1)
 
-        angle = run(cv2.resize(img, (256, 256)))
+        angle = run(frame1)
         angle = angle.numpy().tolist()    
         socket.send_pyobj(angle)
         #socket.send_pyobj(frame1)
