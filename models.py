@@ -25,38 +25,20 @@ class GazeNet(nn.Module):
         # self.Conv2 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=1, stride=1, padding=0)
         # self.Conv3 = nn.Conv2d(in_channels=512, out_channels=1, kernel_size=1, stride=1, padding=0)
         self.layer1 = nn.Sequential(
-            nn.Linear(512*8*8, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5)
+            nn.Linear(512, 128),
+            nn.ReLU()
         )
         self.layer2 = nn.Sequential(
-            nn.Linear(4096, 512),
-            nn.ReLU(),
-            nn.Dropout(0.5)
+            nn.Linear(128, 16),
+            nn.ReLU()
         )   
-        self.fc = nn.Linear(512, 2)
-
-    #     self._initialize_weight()
-    #     self._initialize_bias()
-
-    # def _initialize_weight(self):
-    #     nn.init.normal_(self.Conv1.weight, mean=0.0, std=0.01)
-    #     nn.init.normal_(self.Conv2.weight, mean=0.0, std=0.01)
-    #     nn.init.normal_(self.Conv3.weight, mean=0.0, std=0.001)
-
-    # def _initialize_bias(self):
-    #     nn.init.constant_(self.Conv1.bias, val=0.1)
-    #     nn.init.constant_(self.Conv2.bias, val=0.1)
-    #     nn.init.constant_(self.Conv3.bias, val=1)
+        self.fc = nn.Linear(16, 2)
 
     def forward(self, x):
         x = self.features(x)
         
-        # y = F.relu(self.Conv1(x))
-        # y = F.relu(self.Conv2(y))
-        # y = F.relu(self.Conv3(y))
+        x = F.adaptive_avg_pool2d(x, (1,1))
 
-        # x = F.dropout(F.relu(torch.mul(x, y)), 0.5)
         x = x.view(x.size(0), -1)
         x = self.layer1(x)
         x = self.layer2(x)

@@ -1,32 +1,40 @@
-import os
-import sys
-import argparse
+import random
 import json
 import time
-import random
-import logging
 import numpy as np
+from pathlib import Path
 from tqdm import tqdm
-from collections import OrderedDict
+from PIL import Image
+from torchvision.transforms import functional as tf
 
 import torch
 import torch.nn as nn
-import torch.optim
-import torch.utils.data
-import torch.backends.cuda
-import torchvision.utils
+from torch.utils.data import DataLoader
 
 from models import GazeNet
-from preprocess import MPIIFaceGaze
 
+device = 'cuda'
 
-logging.basicConfig(
-    format='[%(asctime)s %(name)s %(levelname)s] - %(message)s',
-    datefmt='%Y/%m/%d %H:%M:%S',
-    level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-global_step = 0
+class MPIIFaceGaze:
+    def __init__(self, subjects, img_dir, img_size=(256, 256)):
+        self.img_dir = Path(img_dir).expanduser().resolve()
+        self.img_size = img_size
+        self.anns = []
+        for subject_id in subjects:
+            with open(self.img_dir.parent / f'{subject_id:02d}.json') as f:
+                self.anns.extend(json.load(f))
+       
+    def __len__(self):
+        return len(self.anns)
+ 
+    def __getitem__(self, idx):
+        ann = self.anns[idx]
+        img = Image.open(self.img_dir / ann['image'])
+        img = img.resize(self.img_size)
+        img = tf.to_tensor(img)
+        g = torch.FloatTensor(ann['g'])
+        h = torch.FloatTensor(ann['h'])
+        return img, g, h
 
 
 class AverageMeter(object):
@@ -49,7 +57,7 @@ class AverageMeter(object):
 def convert_to_unit_vector(angles):
     x = -torch.cos(angles[:, 0]) * torch.sin(angles[:, 1])
     y = -torch.sin(angles[:, 0])
-    z = -torch.cos(angles[:, 1]) * torch.cos(angles[:, 1])
+    z = -torch.cos(angles[:, 0]) * torch.cos(angles[:, 1])
     norm = torch.sqrt(x**2 + y**2 + z**2)
     x /= norm
     y /= norm
@@ -63,237 +71,111 @@ def compute_angle_error(preds, labels):
     angles = pred_x * label_x + pred_y * label_y + pred_z * label_z
     return torch.acos(angles) * 180 / np.pi
 
-
-def train(epoch, model, optimizer, criterion, train_loader, config, writer):
-    global global_step
-
-    logger.info('Train {}'.format(epoch))
-
+def train(epoch, model, optimizer, criterion, train_loader):
     model.train()
 
     loss_meter = AverageMeter()
     angle_error_meter = AverageMeter()
+
     start = time.time()
-    for step, (images, gazes, headposes) in enumerate(train_loader):
-        global_step += 1
 
-        # if config['tensorboard_images'] and step == 0:
-        #     image = torchvision.utils.make_grid(
-        #         images, normalize=True, scale_each=True)
-        #     writer.add_image('Train/Image', image, epoch)
-
-        images = images.cuda()
-        gazes = gazes.cuda()
+    for image, gaze, headpose in iter(train_loader):
+        image = image.to(device)
+        gaze = gaze.to(device)
 
         optimizer.zero_grad()
-
-        outputs = model(images)
-
-        #print(outputs)
-
-        loss = criterion(outputs, gazes)
+        predict = model(image)
+        loss = criterion(predict, gaze)
         loss.backward()
-
         optimizer.step()
 
-        angle_error = compute_angle_error(outputs, gazes).mean()
+        angle_error = compute_angle_error(predict, gaze).mean()
 
-        num = images.size(0)
+        num = image.size(0)
+
         loss_meter.update(loss.item(), num)
         angle_error_meter.update(angle_error.item(), num)
 
-        # if config['tensorboard']:
-        #     writer.add_scalar('Train/RunningLoss', loss_meter.val, global_step)
+        #pbar.set_postfix(loss=loss_meter.val, angle_error=angle_error_meter.val)
+        #pbar.update(num)
+    
+    #pbar.set_postfix(loss=loss_meter.avg, angle_error=angle_error_meter.avg)
+    elapse = time.time()-start
+    print(f'Running time={elapse:3.3f}')
+    print(f'Train: Loss={loss_meter.avg:3.4f}, angle_error={angle_error_meter.avg:3.4f}')
 
-        # if step % 1000 == 0:
-        #     logger.info('Epoch {} Step {}/{} '
-        #                 'Loss {:.4f} ({:.4f}) '
-        #                 'AngleError {:.2f} ({:.2f})'.format(
-        #                     epoch,
-        #                     step,
-        #                     len(train_loader),
-        #                     loss_meter.val,
-        #                     loss_meter.avg,
-        #                     angle_error_meter.val,
-        #                     angle_error_meter.avg,
-        #                 ))
-
-    logger.info('Epoch {} '
-                'Loss {:.4f} ({:.4f}) '
-                'AngleError {:.2f} ({:.2f})'.format(
-                    epoch,
-                    loss_meter.val,
-                    loss_meter.avg,
-                    angle_error_meter.val,
-                    angle_error_meter.avg,
-                ))
-
-    elapsed = time.time() - start
-    logger.info('Elapsed {:.2f}'.format(elapsed))
-
-    # if config['tensorboard']:
-    #     writer.add_scalar('Train/Loss', loss_meter.avg, epoch)
-    #     writer.add_scalar('Train/AngleError', angle_error_meter.avg, epoch)
-    #     writer.add_scalar('Train/Time', elapsed, epoch)
-
-
-def test(epoch, model, criterion, test_loader, config, writer):
-    logger.info('Test {}'.format(epoch))
-
+def test(epoch, model, criterion, test_loader):
     model.eval()
 
     loss_meter = AverageMeter()
     angle_error_meter = AverageMeter()
-    start = time.time()
-    for step, (images, gazes, headposes) in enumerate(test_loader):
-        # if config['tensorboard_images'] and epoch == 0 and step == 0:
-        #     image = torchvision.utils.make_grid(
-        #         images, normalize=True, scale_each=True)
-        #     writer.add_image('Test/Image', image, epoch)
 
-        images = images.cuda()
-        gazes = gazes.cuda()
+    for image, gaze, headpose in iter(test_loader):
+        image = image.to(device)
+        gaze = gaze.to(device)
 
-        with torch.no_grad():
-            outputs = model(images)
-        loss = criterion(outputs, gazes)
+        predict = model(image)
+        loss = criterion(predict, gaze)
 
-        angle_error = compute_angle_error(outputs, gazes).mean()
+        angle_error = compute_angle_error(predict, gaze).mean()
 
-        num = images.size(0)
+        num = image.size(0)
+
         loss_meter.update(loss.item(), num)
         angle_error_meter.update(angle_error.item(), num)
 
-    logger.info('Epoch {} Loss {:.4f} AngleError {:.2f}'.format(
-        epoch, loss_meter.avg, angle_error_meter.avg))
+        #pbar.set_postfix(loss=loss_meter.val, angle_error=angle_error_meter.val)
+        #pbar.update(num)
 
-    elapsed = time.time() - start
-    logger.info('Elapsed {:.2f}'.format(elapsed))
+    #pbar.set_postfix(loss=loss_meter.avg, angle_error=angle_error_meter.avg)
+    print(f'Test: Loss={loss_meter.avg:3.4f}, angle_error={angle_error_meter.avg:3.4f}')
 
-    # if config['tensorboard']:
-    #     if epoch > 0:
-    #         writer.add_scalar('Test/Loss', loss_meter.avg, epoch)
-    #         writer.add_scalar('Test/AngleError', angle_error_meter.avg, epoch)
-    #     writer.add_scalar('Test/Time', elapsed, epoch)
+    return loss_meter.avg
 
-    # if config['tensorboard_parameters']:
-    #     for name, param in model.named_parameters():
-    #         writer.add_histogram(name, param, global_step)
-
-    return angle_error_meter.avg
-
-
-def main(args):
-    logger.info(json.dumps(vars(args), indent=2))
-
-    # TensorBoard SummaryWriter
-    # writer = SummaryWriter() if args.tensorboard else None
-    writer = None
-
-    # set random seed
+def main():
     seed = 999
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    # create output directory
-    outdir = args.outdir
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
+    # reproducibility
+    torch.backends.cudnn.deterministic = True
 
-    # outpath = os.path.join(outdir, 'config.json')
-    # with open(outpath, 'w') as fout:
-    #     json.dump(vars(args), fout, indent=2)
+    # data directory
+    data_dir = Path('./mpii_data/img/').expanduser().resolve()
+    # output directory
+    out_dir = Path('./output/')
+    if not out_dir.exists():
+        out_dir.mkdir(exist_ok=True)
 
     # data loaders
-    train_set = MPIIFaceGaze(range(0,14), args.images)
-    test_set = MPIIFaceGaze(range(14,15), args.images)
+    train_set = MPIIFaceGaze(range(0,14), data_dir)
+    test_set = MPIIFaceGaze([14], data_dir)
 
     batch_size = 32
-    train_loader = torch.utils.data.DataLoader(
-        train_set, 
-        batch_size = batch_size, 
-        shuffle=True, 
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=True,
-    )
-    test_loader = torch.utils.data.DataLoader(
-        test_set, 
-        batch_size = batch_size, 
-        shuffle=False, 
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=False,
-    )
-
-    # train_loader, test_loader = get_loader(
-    #     args.dataset, args.test_id, args.batch_size, args.num_workers, True)
+    train_loader = DataLoader(train_set, batch_size, shuffle=True, num_workers=6)
+    test_loader = DataLoader(test_set, batch_size, shuffle=False, num_workers=2)
 
     # model
-    device = 'cuda'
     model = GazeNet().to(device)
-    criterion = nn.MSELoss(size_average=True).to(device)
+    criterion = nn.MSELoss().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5)
 
-    # optimizer
-    optimizer = torch.optim.SGD(
-        model.parameters(),
-        lr=args.base_lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-        nesterov=args.nesterov)
-    
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[20, 30], gamma=args.lr_decay)
+    # training epochs
+    for epoch in range(20):
+        print('Epoch ', epoch, flush=True)
 
-    config = None
-
-    # run test before start training
-    #test(0, model, criterion, test_loader, config, writer)
-
-    for epoch in range(1, args.epochs + 1):
-        scheduler.step()
-
-        train(epoch, model, optimizer, criterion, train_loader, config, writer)
+        #with tqdm(total=len(train_set), desc='Train') as pbar:
+        train(epoch, model, optimizer, criterion, train_loader)
         
-        angle_error = test(epoch, model, criterion, test_loader, config,
-                           writer)
+        with torch.no_grad():
+            #with tqdm(total=len(test_set), desc='Test') as pbar:
+            test_loss = test(epoch, model, criterion, test_loader)
+        
+        scheduler.step(test_loss)
 
-        state = OrderedDict([
-            ('args', vars(args)),
-            ('state_dict', model.state_dict()),
-            ('optimizer', optimizer.state_dict()),
-            ('epoch', epoch),
-            ('angle_error', angle_error),
-        ])
-        #model_path = os.path.join(outdir, 'model_state.pth')
-        torch.save(state, 'model_state.pth')
-
-    # if args.tensorboard:
-    #     outpath = os.path.join(outdir, 'all_scalars.json')
-    #     writer.export_scalars_to_json(outpath)
-
-
-def parse_arguments(argv):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='/dataset/MPIIFaceGaze_normalized')
-    parser.add_argument('--images', type=str, default='./mpii_data/img/')
-    parser.add_argument('--test_id', type=int, default=0)
-    parser.add_argument('--outdir', type=str, default='./')
-    parser.add_argument('--seed', type=int, default=6)
-    parser.add_argument('--num_workers', type=int, default=8)
-
-    # optimizer
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--base_lr', type=float, default=0.01)
-    parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--nesterov', type=bool, default=True)
-    parser.add_argument('--milestones', type=str, default='[20, 30]')
-    parser.add_argument('--lr_decay', type=float, default=0.1)
-
-    return parser.parse_args(argv)
-
+        torch.save(model.state_dict(), str(epoch) + '_model_state.pth')
 
 if __name__ == '__main__':
-    main(parse_arguments(sys.argv[1:]))
+    main()
