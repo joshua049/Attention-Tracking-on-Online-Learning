@@ -5,8 +5,9 @@ from torchvision.transforms import functional as tf
 
 device = 'cuda'
 model = Model().to(device)
-state = torch.load('model_state.pth')
-model.load_state_dict(state['state_dict'], strict=False)
+#state = torch.load('model_state.pth')
+#model.load_state_dict(state['state_dict'], strict=False)
+model.load_state_dict(torch.load('model_state.pth'))
 model.eval()
 
 def run(image):
@@ -18,7 +19,7 @@ def run(image):
     image = image.to(device)
 
     with torch.no_grad():
-        angle = model(image, tmp)
+        angle = model(image)
     
     angle = angle.to('cpu')
     angle = angle.squeeze(0)
